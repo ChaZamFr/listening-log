@@ -14,6 +14,8 @@
 <meta name="apple-mobile-web-app-title" content="Listening Log">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://itunes.apple.com">
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Bungee&family=Space+Mono:wght@400;700&family=IBM+Plex+Sans:wght@400;500;600&family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700&display=swap">
 <style>
 /* Layout: one column; search on top, then a crate of photos/covers that open into detail pages */
@@ -198,14 +200,114 @@ function signIn(id){
   lib.artists = lib.artists || {}; lib.albums = lib.albums || {};
   store.lastSkin = store.users[id].skin || 'crate';
   try{ sessionStorage.setItem('ll-user', id); }catch(e){}
-  applySkin(); save();
+  applySkin();
+  try{ localStorage.setItem(KEY, JSON.stringify(store)); }catch(e){}
+  if(store.users[id].online) startSync(id);
 }
 function signOut(){
-  me = null; lib = null; try{ sessionStorage.removeItem('ll-user'); }catch(e){}
+  stopSync(); me = null; lib = null; try{ sessionStorage.removeItem('ll-user'); }catch(e){}
   Object.assign(ui, {q:'', results:[], notice:'', showThemes:false, auth:{mode:'login', pin:'', err:''}});
   history.replaceState(null,'',location.pathname+location.search); applySkin(); render();
 }
-function save(){ try{ localStorage.setItem(KEY, JSON.stringify(store)); }catch(e){ flash('Couldn’t save in this browser. Check that site storage is allowed.'); } }
+function save(){
+  try{ localStorage.setItem(KEY, JSON.stringify(store)); }catch(e){ flash('Couldn’t save in this browser. Check that site storage is allowed.'); }
+  if(me && store.users[me] && store.users[me].online) queuePush();
+}
+
+/* ---------- online accounts (Firebase database, no Google sign-in) ----------
+   An account lives at accounts/<key>, where key = SHA-256 of the name and PIN.
+   Knowing the name and PIN is what opens it; this device keeps a copy so it also works offline. */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyBe9-oMPb6iUAmLCNuXDaOLBNqNB5WmOx8",
+  authDomain: "listening-log-c53a0.firebaseapp.com",
+  projectId: "listening-log-c53a0",
+  storageBucket: "listening-log-c53a0.firebasestorage.app",
+  messagingSenderId: "18036390176",
+  appId: "1:18036390176:web:9769268847a559ba92ff45"
+};
+const FIREBASE_VERSION = '10.12.2';
+const net = { ready:null, db:null, unsub:null, timer:0, sent:'' };
+function loadScript(src){
+  return new Promise((ok,fail)=>{ const t=document.createElement('script'); t.src=src; t.async=false; t.onload=ok; t.onerror=fail; document.head.appendChild(t); });
+}
+function connect(){
+  if(!net.ready){
+    const base = `https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/`;
+    net.ready = Promise.all(['app','firestore'].map(n=>loadScript(base+`firebase-${n}-compat.js`)))
+      .then(()=>{ if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG); net.db = firebase.firestore(); return net.db; })
+      .catch(e=>{ net.ready = null; throw e; });
+  }
+  return net.ready;
+}
+const normName = n => String(n).trim().replace(/\s+/g,' ').toLowerCase();
+async function sha(text){
+  const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+const accountKey = (name, pin) => sha('listening-log|account|' + normName(name) + '|' + pin);
+const nameKey = name => sha('listening-log|name|' + normName(name));
+const OFFLINE = 'You need an internet connection for this. Connect and try again.';
+function accountDoc(u, l){
+  return {name:u.name, skin:u.skin||'synth', artists:(l&&l.artists)||{}, albums:(l&&l.albums)||{}, createdAt:u.createdAt||Date.now(), updatedAt:Date.now()};
+}
+function remember(key, d){
+  store.users[key] = {id:key, name:d.name, skin:d.skin||'synth', online:true, createdAt:d.createdAt||Date.now(), dirty:false};
+  store.libs[key] = {artists:d.artists||{}, albums:d.albums||{}};
+}
+// create a new online account; status is 'ok', 'taken' (name used by someone else) or 'mine' (same name and PIN already exist)
+async function createAccount(name, pin, library, skin){
+  const db = await connect();
+  const key = await accountKey(name, pin), nk = await nameKey(name);
+  const existing = await db.collection('accounts').doc(key).get();
+  if(existing.exists) return {status:'mine', key, data:existing.data()};
+  const taken = await db.collection('names').doc(nk).get();
+  if(taken.exists) return {status:'taken'};
+  await db.collection('names').doc(nk).set({createdAt:Date.now()});
+  const u = {name:name.trim().replace(/\s+/g,' '), skin:skin||'synth', createdAt:Date.now()};
+  const d = accountDoc(u, library);
+  await db.collection('accounts').doc(key).set(d);
+  return {status:'ok', key, data:d};
+}
+function startSync(key){
+  stopSync();
+  connect().then(db=>{
+    if(me!==key) return;
+    net.unsub = db.collection('accounts').doc(key).onSnapshot(snap=>{
+      if(snap.metadata.hasPendingWrites || me!==key) return;
+      const u = store.users[key]; if(!u) return;
+      if(!snap.exists){ queuePush(true); return; }                    // not online yet: upload what this device has
+      const d = snap.data(), remote = {artists:d.artists||{}, albums:d.albums||{}}, rj = JSON.stringify(remote);
+      if(rj === net.sent && !u.dirty) return;                        // our own save coming back
+      if(u.dirty){
+        // changes made here while offline: keep both sides, then save
+        const l = store.libs[key];
+        store.libs[key] = {artists:{...remote.artists, ...l.artists}, albums:{...remote.albums, ...l.albums}};
+        lib = store.libs[key]; queuePush(true);
+      } else {
+        net.sent = rj; store.libs[key] = remote; lib = store.libs[key];
+        if(d.skin && d.skin!==u.skin){ u.skin = d.skin; store.lastSkin = d.skin; applySkin(); }
+        try{ localStorage.setItem(KEY, JSON.stringify(store)); }catch(e){}
+      }
+      render();
+    }, ()=>{});
+  }).catch(()=>{});
+}
+function stopSync(){ if(net.unsub){ net.unsub(); net.unsub = null; } clearTimeout(net.timer); }
+function queuePush(now){
+  const key = me, u = store.users[key]; if(!u || !u.online) return;
+  u.dirty = true;
+  try{ localStorage.setItem(KEY, JSON.stringify(store)); }catch(e){}
+  clearTimeout(net.timer);
+  net.timer = setTimeout(async ()=>{
+    try{
+      const db = await connect();
+      const d = accountDoc(u, store.libs[key]);
+      net.sent = JSON.stringify({artists:d.artists, albums:d.albums});
+      await db.collection('accounts').doc(key).set(d);
+      u.dirty = false; try{ localStorage.setItem(KEY, JSON.stringify(store)); }catch(e){}
+    }catch(e){ /* stays marked as unsaved and goes up on the next change or login */ }
+  }, now ? 0 : 600);
+}
 
 /* ---------- themes ---------- */
 const SKINS = [
@@ -231,8 +333,24 @@ async function hashPin(pin, salt){
   let h = 2166136261; for(const c of data){ h ^= c; h = Math.imul(h, 16777619); } return 'f'+(h>>>0).toString(16);
 }
 async function findByPin(pin){
-  for(const u of Object.values(store.users)){ if(await hashPin(pin, u.salt) === u.pinHash) return u; }
+  for(const u of Object.values(store.users)){
+    if(u.online){ if(await accountKey(u.name, pin) === u.id) return u; }
+    else if(await hashPin(pin, u.salt) === u.pinHash) return u;
+  }
   return null;
+}
+// a profile from the older, this-device-only version: move it online the first time its PIN is used
+async function upgradeProfile(u, pin){
+  const library = store.libs[u.id] || {artists:{}, albums:{}};
+  let r;
+  try{ r = await createAccount(u.name, pin, library, u.skin); }catch(e){ return u.id; }   // offline: keep using it here, try again next time
+  if(r.status==='taken'){ ui.carry = {from:u.id}; return null; }
+  const d = r.data;
+  if(r.status==='mine'){ d.artists = {...(d.artists||{}), ...library.artists}; d.albums = {...(d.albums||{}), ...library.albums}; }
+  delete store.users[u.id]; delete store.libs[u.id];
+  remember(r.key, d); if(r.status==='mine') store.users[r.key].dirty = true;
+  try{ localStorage.setItem(KEY, JSON.stringify(store)); }catch(e){}
+  return r.key;
 }
 const newId = () => 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
 const avatarColor = s => { let h=0; for(const c of String(s)) h=(h*31+c.charCodeAt(0))|0; return `hsl(${Math.abs(h)%360} 55% 45%)`; };
@@ -451,10 +569,12 @@ function viewAlbum(id){
 }
 
 function footer(){
-  return `<footer><span>Profiles are saved in this browser only.</span>
+  const online = me && store.users[me] && store.users[me].online;
+  return `<footer><span>${online ? 'Saved online. Sign in on any device with your name and PIN.' : 'Saved in this browser only.'}</span>
     <button type="button" class="ghost" id="export">Back up library</button>
     <button type="button" class="ghost" id="import">Restore from backup</button>
-    <button type="button" class="ghost" id="del-me">Delete my profile</button>
+    ${online ? '<button type="button" class="ghost" id="forget">Remove from this device</button>' : ''}
+    <button type="button" class="ghost" id="del-me">Delete my account</button>
     <span>Music data from Apple Music.</span></footer>`;
 }
 
@@ -480,17 +600,33 @@ function themePanel(){
 /* ---------- sign-in screens ---------- */
 function viewAuth(){
   const a = ui.auth, hasUsers = Object.keys(store.users).length>0;
+  const pinField = (id,label) => `<label>${label}<input id="${id}" class="pinbox" type="password" inputmode="numeric" pattern="\\d{4}" maxlength="4" autocomplete="off" required></label>`;
+  if(a.mode==='signin') return `
+  <div class="auth">
+    <div class="head"><span class="eyebrow">Your account</span><h1>Sign in on this device</h1>
+      <p class="sub">Type the name and PIN you chose. After this, your PIN alone opens it here.</p></div>
+    <form class="form" id="f-signin" autocomplete="off">
+      <label>Your name<input id="s-name" required maxlength="40" value="${esc(a.name||'')}"></label>
+      ${pinField('s-pin','Your 4-digit PIN')}
+      <p class="err" role="alert">${esc(a.err)}</p>
+      <button type="submit" ${ui.busy?'disabled':''}>${ui.busy?'Signing in…':'Sign in'}</button>
+    </form>
+    <button type="button" class="link" id="to-create">New here? Create an account</button>
+    ${hasUsers?'<button type="button" class="link" id="to-login">Back to PIN</button>':''}
+  </div>`;
   if(a.mode==='create' || !hasUsers) return `
   <div class="auth">
-    <div class="head"><span class="eyebrow">New profile</span><h1>${hasUsers?'Create your profile':'Welcome! Create the first profile'}</h1></div>
+    <div class="head"><span class="eyebrow">New account</span><h1>${hasUsers?'Create an account':'Welcome! Create your account'}</h1>
+      <p class="sub">Your name and PIN work on any phone or laptop.</p></div>
     <form class="form" id="f-create" autocomplete="off">
       <label>Your name<input id="c-name" required maxlength="40" value="${esc(a.name||'')}"></label>
-      <label>Choose a 4-digit PIN<input id="c-pin" class="pinbox" type="password" inputmode="numeric" pattern="\\d{4}" maxlength="4" required></label>
-      <label>Type the PIN again<input id="c-pin2" class="pinbox" type="password" inputmode="numeric" pattern="\\d{4}" maxlength="4" required></label>
+      ${pinField('c-pin','Choose a 4-digit PIN')}
+      ${pinField('c-pin2','Type the PIN again')}
       <p class="err" role="alert">${esc(a.err)}</p>
-      <button type="submit">Create profile</button>
+      <button type="submit" ${ui.busy?'disabled':''}>${ui.busy?'Creating…':'Create account'}</button>
     </form>
-    ${hasUsers?'<button type="button" class="link" id="to-login">I already have a profile</button>':''}
+    <button type="button" class="link" id="to-signin">Already have an account? Sign in</button>
+    ${hasUsers?'<button type="button" class="link" id="to-login">Back to PIN</button>':''}
   </div>`;
   const locked = Date.now() < ui.lockUntil;
   return `
@@ -508,7 +644,8 @@ function viewAuth(){
       <button type="button" data-digit="0">0</button>
       <button type="button" class="back" id="pin-back" aria-label="Delete last digit">⌫</button>
     </div>
-    <button type="button" class="link" id="to-create">New here? Create a profile</button>
+    <div class="row" style="justify-content:center"><button type="button" class="link" id="to-signin">Using a new device? Sign in</button>
+      <button type="button" class="link" id="to-create">Create an account</button></div>
     ${installBtn()}
     </div>
   </div>`;
@@ -544,11 +681,18 @@ async function pushDigit(d){
     if(u){
       ui.fails=0; spin.target = 200;
       const arm = document.getElementById('arm'); if(arm) arm.classList.add('play');
-      setTimeout(()=>{ ui.checking=false; a.pin=''; signIn(u.id); location.hash=''; render(); }, reduceMotion ? 0 : 900);
+      const pin = a.pin;
+      const target = u.online ? u.id : await upgradeProfile(u, pin);
+      if(!target){            // its name is already used online by someone else
+        ui.checking=false; a.pin='';
+        ui.auth = {mode:'create', name:'', err:`Someone else already uses the name “${u.name}”. Pick another name to move your library online.`};
+        render(); return;
+      }
+      setTimeout(()=>{ ui.checking=false; a.pin=''; signIn(target); location.hash=''; render(); }, reduceMotion ? 0 : 900);
       return;
     }
     ui.checking = false;
-    ui.fails++; a.pin=''; a.err='That PIN doesn’t match any profile.';
+    ui.fails++; a.pin=''; a.err='That PIN doesn’t match any account on this device.';
     spin.speed = -420;                                 // record scratch
     if(ui.fails>=5){ ui.fails=0; ui.lockUntil=Date.now()+30000; setTimeout(render,30100); render(); return; }
     updateLogin(); void document.getElementById('dots').offsetWidth; document.getElementById('dots').classList.add('shake');
@@ -648,15 +792,26 @@ app.addEventListener('click', async e=>{
   if(b.id==='pin-back'){ if(ui.checking) return; ui.auth.pin = ui.auth.pin.slice(0,-1); updateLogin(); return; }
   if(b.id==='to-create'){ ui.auth = {mode:'create', pin:'', err:''}; render(); return; }
   if(b.id==='to-login'){ ui.auth = {mode:'login', pin:'', err:''}; render(); return; }
+  if(b.id==='to-signin'){ ui.auth = {mode:'signin', pin:'', err:''}; render(); return; }
+  if(b.id==='forget'){
+    if(!b.classList.contains('armed')){ b.classList.add('armed','danger'); b.textContent='Tap again to remove it here (it stays online)';
+      setTimeout(()=>{ if(b.isConnected){ b.classList.remove('armed','danger'); b.textContent='Remove from this device'; } }, 5000); return; }
+    const id = me; signOut(); delete store.users[id]; delete store.libs[id]; save(); render(); return;
+  }
   if(b.id==='logout'){ signOut(); return; }
   if(b.id==='toggle-themes'){ ui.showThemes = !ui.showThemes; render(); return; }
   if(b.dataset.skin){ store.users[me].skin = b.dataset.skin; store.lastSkin = b.dataset.skin; save(); applySkin(); render(); return; }
   if(b.id==='del-me'){
     if(!b.classList.contains('armed')){
-      b.classList.add('armed','danger'); b.textContent='Tap again to delete your profile and library';
-      setTimeout(()=>{ if(b.isConnected){ b.classList.remove('armed','danger'); b.textContent='Delete my profile'; } }, 5000); return;
+      b.classList.add('armed','danger'); b.textContent='Tap again to delete your account and library everywhere';
+      setTimeout(()=>{ if(b.isConnected){ b.classList.remove('armed','danger'); b.textContent='Delete my account'; } }, 5000); return;
     }
-    delete store.users[me]; delete store.libs[me]; save(); signOut(); return;
+    const id = me;
+    if(store.users[id].online){
+      try{ const db = await connect(); stopSync(); await db.collection('accounts').doc(id).delete(); }
+      catch(err){ flash(OFFLINE); return; }
+    }
+    signOut(); delete store.users[id]; delete store.libs[id]; save(); render(); return;
   }
   if(b.dataset.addArtist){
     const a = ui.results.find(x=>String(x.id)===b.dataset.addArtist); if(!a) return;
@@ -704,24 +859,49 @@ document.getElementById('import-file').addEventListener('change', async e=>{
 });
 
 app.addEventListener('submit', async e=>{
+  if(e.target.id==='f-signin'){
+    e.preventDefault(); if(ui.busy) return;
+    const name = document.getElementById('s-name').value.trim(), pin = document.getElementById('s-pin').value;
+    const fail = m => { ui.busy=false; ui.auth = {mode:'signin', name, pin:'', err:m}; render(); };
+    if(!name) return fail('Enter your name.');
+    if(!/^\d{4}$/.test(pin)) return fail('The PIN is 4 digits.');
+    ui.busy = true; render();
+    try{
+      const key = await accountKey(name, pin);
+      if(store.users[key]){ ui.busy=false; ui.auth={mode:'login',pin:'',err:''}; signIn(key); location.hash=''; render(); return; }
+      const db = await connect();
+      const snap = await db.collection('accounts').doc(key).get();
+      if(!snap.exists) return fail('No account matches that name and PIN.');
+      remember(key, snap.data());
+      ui.busy=false; ui.auth = {mode:'login', pin:'', err:''};
+      signIn(key); location.hash=''; render();
+    }catch(err){ fail(OFFLINE); }
+    return;
+  }
   if(e.target.id!=='f-create') return;
-  e.preventDefault();
+  e.preventDefault(); if(ui.busy) return;
   const name = document.getElementById('c-name').value.trim();
   const p1 = document.getElementById('c-pin').value, p2 = document.getElementById('c-pin2').value;
-  const fail = m => { ui.auth = {mode:'create', name, pin:'', err:m}; render(); };
+  const fail = m => { ui.busy=false; ui.auth = {mode:'create', name, pin:'', err:m}; render(); };
   if(!name) return fail('Enter your name.');
   if(!/^\d{4}$/.test(p1)) return fail('The PIN must be exactly 4 digits.');
   if(p1!==p2) return fail('The two PINs don’t match. Type them again.');
-  if(await findByPin(p1)) return fail('Choose a different PIN.');
-  const id = newId(), salt = Math.random().toString(36).slice(2) + Date.now().toString(36);
-  store.users[id] = {id, name, salt, pinHash: await hashPin(p1, salt), skin: 'synth', createdAt: Date.now()};
-  // The first profile inherits a library saved by the earlier, single-user version.
-  if(!store.migrated){
-    try{ const old = JSON.parse(localStorage.getItem(OLD_KEY)||'null'); if(old && (Object.keys(old.artists||{}).length)) store.libs[id] = {artists:old.artists||{}, albums:old.albums||{}}; }catch(err){}
-    store.migrated = true;
+  // bring along a library from this device: an older profile being moved online, or the very first single-user version
+  let library = {artists:{}, albums:{}}, skin = 'synth', carryFrom = null;
+  if(ui.carry && store.users[ui.carry.from]){ carryFrom = ui.carry.from; library = store.libs[carryFrom] || library; skin = store.users[carryFrom].skin || skin; }
+  else if(!store.migrated){
+    try{ const old = JSON.parse(localStorage.getItem(OLD_KEY)||'null'); if(old && Object.keys(old.artists||{}).length) library = {artists:old.artists||{}, albums:old.albums||{}}; }catch(err){}
   }
-  ui.auth = {mode:'login', pin:'', err:''};
-  signIn(id); location.hash=''; render();
+  ui.busy = true; render();
+  let r;
+  try{ r = await createAccount(name, p1, library, skin); }catch(err){ return fail(OFFLINE); }
+  if(r.status==='taken') return fail('That name is already used. Add your surname or a nickname.');
+  if(r.status==='mine') return fail('You already have an account with this name and PIN. Tap “Already have an account? Sign in”.');
+  if(carryFrom){ delete store.users[carryFrom]; delete store.libs[carryFrom]; ui.carry = null; }
+  store.migrated = true;
+  remember(r.key, r.data);
+  ui.busy=false; ui.auth = {mode:'login', pin:'', err:''};
+  signIn(r.key); location.hash=''; render();
 });
 document.addEventListener('keydown', e=>{
   if(me || ui.auth.mode!=='login' || Object.keys(store.users).length===0) return;
@@ -731,6 +911,7 @@ document.addEventListener('keydown', e=>{
 });
 
 if(me && store.users[me]) signIn(me); else me = null;
+connect().catch(()=>{});            // load the database code early so signing in feels instant
 applySkin();
 render();
 })();
