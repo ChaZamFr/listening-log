@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-skin="synth">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -211,7 +211,7 @@ const SKINS = [
   {id:'synth',    name:'Synthwave', desc:'Eighties neon sunset with yellow headings.', sw:['#1b0b3a','#2ee6ff','#ff2e88']}
 ];
 function applySkin(){
-  const skin = me ? (store.users[me].skin || 'crate') : (store.lastSkin || 'crate');
+  const skin = me ? (store.users[me].skin || 'crate') : (store.lastSkin || 'synth');   // first visit: Synthwave
   if(skin==='crate') delete document.documentElement.dataset.skin; else document.documentElement.dataset.skin = skin;
 }
 
@@ -684,7 +684,7 @@ app.addEventListener('submit', async e=>{
   if(p1!==p2) return fail('The two PINs don’t match. Type them again.');
   if(await findByPin(p1)) return fail('Choose a different PIN.');
   const id = newId(), salt = Math.random().toString(36).slice(2) + Date.now().toString(36);
-  store.users[id] = {id, name, salt, pinHash: await hashPin(p1, salt), skin: store.lastSkin || 'crate', createdAt: Date.now()};
+  store.users[id] = {id, name, salt, pinHash: await hashPin(p1, salt), skin: 'synth', createdAt: Date.now()};
   // The first profile inherits a library saved by the earlier, single-user version.
   if(!store.migrated){
     try{ const old = JSON.parse(localStorage.getItem(OLD_KEY)||'null'); if(old && (Object.keys(old.artists||{}).length)) store.libs[id] = {artists:old.artists||{}, albums:old.albums||{}}; }catch(err){}
