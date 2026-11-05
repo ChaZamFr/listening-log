@@ -437,7 +437,7 @@ function viewAlbum(id){
   ${notice()}
   ${t ? (t.length ? `<ol class="tracks">${t.map((x,i)=>`<li><span class="n">${String(i+1).padStart(2,'0')}</span><span>${esc(x.title)}</span><span class="d">${fmtDur(x.duration)}</span></li>`).join('')}</ol>` : '<div class="empty">No tracklist is available for this album.</div>')
       : ui.tracksErr ? `<p class="hint">${esc(ui.tracksErr)} <button type="button" class="ghost" id="retry-tracks">Try again</button></p>` : '<p class="hint">Loading songs…</p>'}
-  <div class="row">${al.link?`<a class="chip" href="${esc(al.link)}" target="_blank" rel="noopener">${isApple(al.id)?'Open in Apple Music':'Open on Deezer'}</a>`:''}<button class="danger" id="del-album" type="button">Remove album</button></div>`;
+  <div class="row"><a class="chip" href="https://open.spotify.com/search/${encodeURIComponent(al.title+' '+a.name)}" target="_blank" rel="noopener">Open on Spotify</a><button class="danger" id="del-album" type="button">Remove album</button></div>`;
 }
 
 function footer(){
