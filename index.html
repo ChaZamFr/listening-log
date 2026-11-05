@@ -41,6 +41,18 @@
   --accent:#f0408f; --accent-ink:#ffffff; --danger:#d62e4a; --ok:#14a074;
   --display:"Fredoka","Nunito",sans-serif; --body:"Nunito","Helvetica Neue",Arial,sans-serif;
   --r-panel:22px; --r-pic:18px; --r-btn:99px; color-scheme:light}
+:root[data-skin="lofi"]{
+  --bg:#dfe5d6; --surface:#f2f5ed; --ink:#343d30; --muted:#68725f; --line:#c6cfba;
+  --accent:#b9704f; --accent-ink:#ffffff; --danger:#b23a2e; --ok:#3f7d4e;
+  --display:"Fredoka","Nunito",sans-serif; --body:"Nunito","Helvetica Neue",Arial,sans-serif;
+  --r-panel:20px; --r-pic:16px; --r-btn:99px; color-scheme:light}
+:root[data-skin="synth"]{
+  --bg:#1b0b3a; --surface:#2a1257; --ink:#ffe9fb; --muted:#c7a3dc; --line:#46207c;
+  --accent:#2ee6ff; --accent-ink:#1b0b3a; --danger:#ff6b8b; --ok:#5dffb0;
+  --display:"Bungee","Arial Black",sans-serif; --r-panel:6px; --r-pic:4px; --r-btn:4px; color-scheme:dark}
+:root[data-skin="synth"]{min-height:100%;background:linear-gradient(180deg,#1b0b3a 0%,#1b0b3a 50%,#4a0f5c 82%,#8a1660 100%)}
+:root[data-skin="synth"] body{background:transparent}
+:root[data-skin="synth"] h1{color:#ffd23f;text-shadow:3px 3px 0 #ff2e88}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 var(--body)}
@@ -117,6 +129,27 @@ footer a{color:var(--muted)}
 .skin .sw{display:grid;grid-template-columns:2fr 1fr 1fr;height:44px;border-radius:6px;overflow:hidden;border:1px solid rgba(0,0,0,.08)}
 .skin .nm{font-weight:600}.skin .ds{font-size:12px;color:var(--muted);font-weight:400}
 .auth{max-width:380px;width:100%;margin:4vh auto 0;display:flex;flex-direction:column;gap:22px;align-items:stretch;text-align:center}
+.auth.tt{max-width:860px;display:grid;grid-template-columns:minmax(0,1fr);gap:28px;align-items:center;margin-top:2vh}
+.auth.tt .side{display:flex;flex-direction:column;gap:18px;min-width:0}
+.auth.tt .sub{margin:0;color:var(--muted)}
+@media (min-width:760px){.auth.tt{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:56px}}
+.deck{position:relative;width:min(340px,72vw);aspect-ratio:1;margin:0 auto}
+.deck .plinth{position:absolute;inset:-7%;border-radius:var(--r-panel);background:var(--surface);border:1px solid var(--line);box-shadow:0 30px 60px -30px rgba(0,0,0,.55)}
+.deck .platter{position:absolute;inset:0;border-radius:50%;background:#0c0c0e;box-shadow:0 0 0 3px var(--line)}
+.deck .vinyl{position:absolute;inset:3%;border-radius:50%;background:repeating-radial-gradient(circle,#141416 0 2px,#202024 2px 4px);will-change:transform}
+.deck .label{position:absolute;inset:34%;border-radius:50%;
+  background:conic-gradient(var(--accent) 0 80%,var(--accent-ink) 80% 84%,var(--accent) 84%);display:grid;place-items:center}
+.deck .label i{width:9%;height:9%;border-radius:50%;background:#e8e8ec}
+.deck .label b{position:absolute;top:22%;font:700 9px var(--mono);letter-spacing:.14em;color:var(--accent-ink)}
+.deck .sheen{position:absolute;inset:3%;border-radius:50%;pointer-events:none;
+  background:conic-gradient(from 20deg,transparent 0 8%,rgba(255,255,255,.13) 13%,transparent 19% 58%,rgba(255,255,255,.09) 63%,transparent 69%)}
+.deck .pivot{position:absolute;top:-3%;right:-3%;width:16%;aspect-ratio:1;border-radius:50%;background:radial-gradient(#e6e8ee 0 30%,#9aa0ad 32% 100%);box-shadow:0 4px 10px rgba(0,0,0,.35)}
+.deck .arm{position:absolute;top:3%;right:4.5%;width:4%;height:66%;transform-origin:50% 0;transform:rotate(3deg);
+  transition:transform .7s cubic-bezier(.3,1.35,.5,1);background:linear-gradient(90deg,#8d93a0,#eef0f5,#8d93a0);border-radius:6px}
+.deck .arm .head{position:absolute;bottom:-9%;left:-90%;width:280%;height:13%;background:var(--ink);border-radius:4px}
+.deck .arm.play{transform:rotate(15deg)}
+.deck.scratch .vinyl{filter:brightness(1.15)}
+.auth.tt .dots span.on{background:var(--accent);border-color:var(--accent)}
 .auth h1{font-size:clamp(1.8rem,7vw,2.4rem)}
 .dots{display:flex;gap:14px;justify-content:center;height:18px}
 .dots span{width:16px;height:16px;border-radius:50%;border:2px solid var(--muted)}
@@ -133,7 +166,7 @@ footer a{color:var(--muted)}
 .form label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--muted)}
 .link{background:none;color:var(--accent);padding:4px;font-weight:600}
 .pinbox{letter-spacing:.6em;font:600 20px var(--mono);text-align:center}
-@media (prefers-reduced-motion:reduce){.dots.shake{animation:none}}
+@media (prefers-reduced-motion:reduce){.dots.shake{animation:none}.deck .arm{transition:none}}
 @media (prefers-reduced-motion:reduce){.brand svg{transition:none}.pic{transition:none}.card:hover .pic{transform:none}}
 </style>
 </head>
@@ -173,7 +206,9 @@ const SKINS = [
   {id:'midnight', name:'Midnight', desc:'Late-night indigo with coral.',            sw:['#17122b','#ff7a59','#f2edff']},
   {id:'cassette', name:'Cassette', desc:'Seventies mustard and tape orange.',       sw:['#f3d9a4','#d4451c','#2b1d12']},
   {id:'liner',    name:'Liner Notes', desc:'Typewriter type, square edges, red ink.', sw:['#e6ebe5','#cf2f2a','#17251d']},
-  {id:'pop',      name:'Pop',      desc:'Lilac and pink with soft round corners.',  sw:['#efe6ff','#f0408f','#2a1a4d']}
+  {id:'pop',      name:'Pop',      desc:'Lilac and pink with soft round corners.',  sw:['#efe6ff','#f0408f','#2a1a4d']},
+  {id:'lofi',     name:'Lo-fi',    desc:'Dusty sage and terracotta. Rainy-day study vibe.', sw:['#dfe5d6','#b9704f','#343d30']},
+  {id:'synth',    name:'Synthwave', desc:'Eighties neon sunset with yellow headings.', sw:['#1b0b3a','#2ee6ff','#ff2e88']}
 ];
 function applySkin(){
   const skin = me ? (store.users[me].skin || 'crate') : (store.lastSkin || 'crate');
@@ -449,9 +484,13 @@ function viewAuth(){
   </div>`;
   const locked = Date.now() < ui.lockUntil;
   return `
-  <div class="auth">
-    <div class="head"><span class="eyebrow">Who’s listening?</span><h1>Enter your PIN</h1></div>
-    <div class="dots" id="dots">${[0,1,2,3].map(i=>`<span class="${i<a.pin.length?'on':''}"></span>`).join('')}</div>
+  <div class="auth tt">
+    <div class="deck" id="deck" aria-hidden="true"><div class="plinth"></div><div class="platter"></div>
+      <div class="vinyl" id="vinyl" style="transform:rotate(${spin.angle}deg)"><div class="label"><b>SIDE A</b><i></i></div></div>
+      <div class="sheen"></div><div class="pivot"></div><div class="arm" id="arm"><span class="head"></span></div></div>
+    <div class="side">
+    <div class="head"><span class="eyebrow">Who’s listening?</span><h1>Drop the needle</h1><p class="sub">Enter your 4-digit PIN. The record spins up as you type.</p></div>
+    <div class="dots" id="dots">${dotsHTML()}</div>
     <p class="err" role="alert" id="auth-err">${esc(locked?'Too many wrong tries. Wait 30 seconds and try again.':a.err)}</p>
     <div class="pad" role="group" aria-label="PIN keypad">
       ${[1,2,3,4,5,6,7,8,9].map(n=>`<button type="button" data-digit="${n}">${n}</button>`).join('')}
@@ -460,20 +499,48 @@ function viewAuth(){
       <button type="button" class="back" id="pin-back" aria-label="Delete last digit">⌫</button>
     </div>
     <button type="button" class="link" id="to-create">New here? Create a profile</button>
+    </div>
   </div>`;
+}
+const dotsHTML = () => [0,1,2,3].map(i=>`<span class="${i<ui.auth.pin.length?'on':''}"></span>`).join('');
+
+/* ---------- the turntable: speed follows how many digits are typed ---------- */
+const reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+const SPEEDS = [18, 60, 120, 190, 260];           // degrees per second for 0..4 digits
+const spin = {angle:0, speed:18, target:18, raf:0, last:0};
+function spinFrame(t){
+  const v = document.getElementById('vinyl');
+  if(!v){ spin.raf = 0; return; }
+  const dt = spin.last ? Math.min(.05, (t-spin.last)/1000) : 0; spin.last = t;
+  spin.speed += (spin.target - spin.speed) * Math.min(1, dt*3);
+  spin.angle = (spin.angle + spin.speed*dt) % 360;
+  v.style.transform = `rotate(${spin.angle}deg)`;
+  spin.raf = requestAnimationFrame(spinFrame);
+}
+function startSpin(){ if(reduceMotion || spin.raf) return; spin.last = 0; spin.raf = requestAnimationFrame(spinFrame); }
+function updateLogin(){
+  const d = document.getElementById('dots'); if(d){ d.classList.remove('shake'); d.innerHTML = dotsHTML(); }
+  const e = document.getElementById('auth-err'); if(e) e.textContent = ui.auth.err;
+  spin.target = SPEEDS[ui.auth.pin.length] || SPEEDS[0];
 }
 async function pushDigit(d){
   const a = ui.auth;
   if(Date.now() < ui.lockUntil || a.pin.length>=4 || ui.checking) return;
-  a.pin += d; a.err=''; render();
+  a.pin += d; a.err=''; updateLogin();
   if(a.pin.length===4){
     ui.checking = true;
     const u = await findByPin(a.pin);
+    if(u){
+      ui.fails=0; spin.target = 200;
+      const arm = document.getElementById('arm'); if(arm) arm.classList.add('play');
+      setTimeout(()=>{ ui.checking=false; a.pin=''; signIn(u.id); location.hash=''; render(); }, reduceMotion ? 0 : 900);
+      return;
+    }
     ui.checking = false;
-    if(u){ ui.fails=0; a.pin=''; signIn(u.id); location.hash=''; render(); return; }
     ui.fails++; a.pin=''; a.err='That PIN doesn’t match any profile.';
-    if(ui.fails>=5){ ui.fails=0; ui.lockUntil=Date.now()+30000; setTimeout(render,30100); }
-    render(); const d2=document.getElementById('dots'); if(d2) d2.classList.add('shake');
+    spin.speed = -420;                                 // record scratch
+    if(ui.fails>=5){ ui.fails=0; ui.lockUntil=Date.now()+30000; setTimeout(render,30100); render(); return; }
+    updateLogin(); void document.getElementById('dots').offsetWidth; document.getElementById('dots').classList.add('shake');
   }
 }
 
@@ -487,7 +554,7 @@ function render(){
   const r = route();
   const act = document.activeElement && document.activeElement.id;
   const pos = act && document.activeElement.selectionStart;
-  if(!me){ app.innerHTML = brand() + viewAuth(); if(act){ const el=document.getElementById(act); if(el) el.focus(); } return; }
+  if(!me){ app.innerHTML = brand() + viewAuth(); if(act){ const el=document.getElementById(act); if(el) el.focus(); } spin.target = SPEEDS[ui.auth.pin.length]||SPEEDS[0]; startSpin(); return; }
   app.innerHTML = topbar() + (r.view==='artist' ? viewArtist(r.id) : r.view==='album' ? viewAlbum(r.id) : viewHome());
   if(act){ const el=document.getElementById(act); if(el){ el.focus(); try{ if(pos!=null) el.setSelectionRange(pos,pos); }catch(e){} } }
   if(r.view==='artist' && lib.artists[r.id] && !ui.disco[r.id] && !ui.discoErr[r.id] && !loadingDisco[r.id]) loadDisco(r.id);
@@ -548,7 +615,7 @@ app.addEventListener('click', async e=>{
   const b = e.target.closest('button'); if(!b) return;
   const r = route();
   if(b.dataset.digit){ pushDigit(b.dataset.digit); return; }
-  if(b.id==='pin-back'){ ui.auth.pin = ui.auth.pin.slice(0,-1); render(); return; }
+  if(b.id==='pin-back'){ if(ui.checking) return; ui.auth.pin = ui.auth.pin.slice(0,-1); updateLogin(); return; }
   if(b.id==='to-create'){ ui.auth = {mode:'create', pin:'', err:''}; render(); return; }
   if(b.id==='to-login'){ ui.auth = {mode:'login', pin:'', err:''}; render(); return; }
   if(b.id==='logout'){ signOut(); return; }
@@ -630,7 +697,7 @@ document.addEventListener('keydown', e=>{
   if(me || ui.auth.mode!=='login' || Object.keys(store.users).length===0) return;
   if(e.target.closest && e.target.closest('input,textarea')) return;
   if(/^\d$/.test(e.key)) pushDigit(e.key);
-  else if(e.key==='Backspace'){ ui.auth.pin = ui.auth.pin.slice(0,-1); render(); }
+  else if(e.key==='Backspace' && !ui.checking){ ui.auth.pin = ui.auth.pin.slice(0,-1); updateLogin(); }
 });
 
 if(me && store.users[me]) signIn(me); else me = null;
