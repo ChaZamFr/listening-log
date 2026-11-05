@@ -228,7 +228,7 @@ const FIREBASE_CONFIG = {
 const FIREBASE_VERSION = '10.12.2';
 const net = { ready:null, db:null, unsub:null, timer:0, sent:'' };
 function loadScript(src){
-  return new Promise((ok,fail)=>{ const t=document.createElement('script'); t.src=src; t.async=false; t.onload=ok; t.onerror=fail; document.head.appendChild(t); });
+  return new Promise((ok,fail)=>{ const t=document.createElement('script'); t.src=src; t.async=false; t.onload=ok; t.onerror=()=>fail({type:'error'}); document.head.appendChild(t); });
 }
 function connect(){
   if(!net.ready){
@@ -247,6 +247,18 @@ async function sha(text){
 const accountKey = (name, pin) => sha('listening-log|account|' + normName(name) + '|' + pin);
 const nameKey = name => sha('listening-log|name|' + normName(name));
 const OFFLINE = 'You need an internet connection for this. Connect and try again.';
+// turn a database error into a message that says what to fix
+function netError(e){
+  const code = (e && e.code) || '', msg = String((e && e.message) || '');
+  if(!navigator.onLine) return OFFLINE;
+  if(e && e.type === 'error' && !code) return 'The database code couldn’t load from gstatic.com. An ad blocker, privacy extension or school/office network may be blocking it. Allow this site or try another network.';
+  if(code === 'permission-denied') return 'The database refused this. In Firebase, open Firestore Database → Rules, paste in the rules from firestore.rules and click Publish. (permission-denied)';
+  if(code === 'not-found' || /does not exist|NOT_FOUND/i.test(msg)) return 'The online database hasn’t been created yet. In Firebase, open Firestore Database and click Create database. (not-found)';
+  if(code === 'failed-precondition') return 'The online database isn’t ready yet. In Firebase, check that Firestore Database is created. (failed-precondition)';
+  if(code === 'unavailable' || /offline/i.test(msg)) return 'Couldn’t reach the online database. If your internet works, a firewall or blocker may be stopping firestore.googleapis.com. (unavailable)';
+  if(code === 'invalid-argument' || code === 'unauthenticated') return 'Firebase rejected the project settings. Check the Firebase config in index.html. (' + code + ')';
+  return 'Something went wrong talking to the online database' + (code ? ' (' + code + ')' : '') + (msg ? ': ' + msg.slice(0,140) : '.');
+}
 function accountDoc(u, l){
   return {name:u.name, skin:u.skin||'synth', artists:(l&&l.artists)||{}, albums:(l&&l.albums)||{}, createdAt:u.createdAt||Date.now(), updatedAt:Date.now()};
 }
@@ -809,7 +821,7 @@ app.addEventListener('click', async e=>{
     const id = me;
     if(store.users[id].online){
       try{ const db = await connect(); stopSync(); await db.collection('accounts').doc(id).delete(); }
-      catch(err){ flash(OFFLINE); return; }
+      catch(err){ flash(netError(err)); return; }
     }
     signOut(); delete store.users[id]; delete store.libs[id]; save(); render(); return;
   }
@@ -875,7 +887,7 @@ app.addEventListener('submit', async e=>{
       remember(key, snap.data());
       ui.busy=false; ui.auth = {mode:'login', pin:'', err:''};
       signIn(key); location.hash=''; render();
-    }catch(err){ fail(OFFLINE); }
+    }catch(err){ fail(netError(err)); }
     return;
   }
   if(e.target.id!=='f-create') return;
@@ -894,7 +906,7 @@ app.addEventListener('submit', async e=>{
   }
   ui.busy = true; render();
   let r;
-  try{ r = await createAccount(name, p1, library, skin); }catch(err){ return fail(OFFLINE); }
+  try{ r = await createAccount(name, p1, library, skin); }catch(err){ return fail(netError(err)); }
   if(r.status==='taken') return fail('That name is already used. Add your surname or a nickname.');
   if(r.status==='mine') return fail('You already have an account with this name and PIN. Tap “Already have an account? Sign in”.');
   if(carryFrom){ delete store.users[carryFrom]; delete store.libs[carryFrom]; ui.carry = null; }
