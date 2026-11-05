@@ -1,6 +1,6 @@
 // Listening Log service worker: keeps the app opening when you're offline.
 // Bump VERSION whenever you upload a new index.html so phones pick it up quickly.
-const VERSION = 'v3';
+const VERSION = 'v4';
 const SHELL = `ll-shell-${VERSION}`;
 const FONTS = 'll-fonts';
 const SHELL_FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
