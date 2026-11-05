@@ -1,0 +1,33 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // One account per name + PIN. The document id is a SHA-256 code of the name and PIN,
+    // so you can only open an account if you know both. Nobody can list accounts.
+    match /accounts/{key} {
+      allow get: if key.matches('^[0-9a-f]{64}$');
+      allow list: if false;
+      allow create, update: if key.matches('^[0-9a-f]{64}$')
+        && request.resource.data.keys().hasOnly(['name', 'skin', 'artists', 'albums', 'createdAt', 'updatedAt'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0 && request.resource.data.name.size() <= 40
+        && request.resource.data.artists is map
+        && request.resource.data.albums is map;
+      allow delete: if key.matches('^[0-9a-f]{64}$');
+    }
+
+    // Names already in use (stored as codes, not as readable names), so two people can't share one.
+    match /names/{key} {
+      allow get: if key.matches('^[0-9a-f]{64}$');
+      allow list: if false;
+      allow create: if key.matches('^[0-9a-f]{64}$')
+        && request.resource.data.keys().hasOnly(['createdAt']);
+      allow update, delete: if false;
+    }
+
+    // Everything else is closed.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
