@@ -13,8 +13,6 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Listening Log">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
-<link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
 <link rel="preconnect" href="https://itunes.apple.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Bungee&family=Space+Mono:wght@400;700&family=IBM+Plex+Sans:wght@400;500;600&family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700&display=swap">
 <style>
@@ -174,10 +172,6 @@ footer a{color:var(--muted)}
 .form{display:flex;flex-direction:column;gap:14px;text-align:left}
 .form label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--muted)}
 .link{background:none;color:var(--accent);padding:4px;font-weight:600}
-.gbtn{display:inline-flex;align-items:center;justify-content:center;gap:12px;background:#ffffff;color:#1f1f1f;border:1px solid #dadce0;border-radius:99px;padding:12px 22px;font:600 15px var(--body);align-self:center}
-.gbtn:hover{box-shadow:0 2px 10px rgba(0,0,0,.18)}
-select{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:var(--r-btn);padding:10px 12px;width:100%}
-.form.panel h2{font-size:1rem}
 .pinbox{letter-spacing:.6em;font:600 20px var(--mono);text-align:center}
 @media (prefers-reduced-motion:reduce){.dots.shake{animation:none}.deck .arm{transition:none}}
 @media (prefers-reduced-motion:reduce){.brand svg{transition:none}.pic{transition:none}.card:hover .pic{transform:none}}
@@ -193,27 +187,10 @@ select{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(-
 const app = document.getElementById('app');
 const KEY = 'listening-log-v3', OLD_KEY = 'listening-log-v2';
 
-/* ---------- Google sign-in (Firebase) ----------
-   Paste the firebaseConfig object from your Firebase project between the braces below.
-   While it is empty, the site keeps working with PIN profiles saved in this browser only. */
-const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyBe9-oMPb6iUAmLCNuXDaOLBNqNB5WmOx8",
-  authDomain: "listening-log-c53a0.firebaseapp.com",
-  projectId: "listening-log-c53a0",
-  storageBucket: "listening-log-c53a0.firebasestorage.app",
-  messagingSenderId: "18036390176",
-  appId: "1:18036390176:web:9769268847a559ba92ff45"
-};
-const CLOUD = !!(FIREBASE_CONFIG && FIREBASE_CONFIG.apiKey);
-const FIREBASE_VERSION = '10.12.2';
-
 /* ---------- profiles + libraries (this browser) ---------- */
 let store = { users:{}, libs:{} };
 try{ const raw = localStorage.getItem(KEY); if(raw) store = JSON.parse(raw); }catch(e){}
 store.users = store.users || {}; store.libs = store.libs || {};
-const localStore = store;                       // PIN profiles saved in this browser
-if(CLOUD) store = { users:{}, libs:{}, lastSkin: localStore.lastSkin };   // mirror of the signed-in Google account
-const cloud = { state: CLOUD ? 'loading' : 'off', user:null, profile:undefined, err:'', auth:null, db:null, subs:[], sent:{p:'',l:''}, timer:0 };
 let me = null, lib = null;
 try{ me = sessionStorage.getItem('ll-user'); }catch(e){}
 function signIn(id){
@@ -228,120 +205,7 @@ function signOut(){
   Object.assign(ui, {q:'', results:[], notice:'', showThemes:false, auth:{mode:'login', pin:'', err:''}});
   history.replaceState(null,'',location.pathname+location.search); applySkin(); render();
 }
-function save(){
-  if(CLOUD){
-    localStore.lastSkin = store.lastSkin;
-    try{ localStorage.setItem(KEY, JSON.stringify(localStore)); }catch(e){}
-    if(!cloud.libLoaded) cloud.dirty = true;
-    writeCache();
-    clearTimeout(cloud.timer); cloud.timer = setTimeout(cloudSave, 500);
-    return;
-  }
-  try{ localStorage.setItem(KEY, JSON.stringify(store)); }catch(e){ flash('Couldn’t save in this browser. Check that site storage is allowed.'); }
-}
-
-/* ---------- cloud sync ---------- */
-function loadScript(src){
-  return new Promise((ok,fail)=>{ const t=document.createElement('script'); t.src=src; t.async=false; t.onload=ok; t.onerror=fail; document.head.appendChild(t); });
-}
-async function initCloud(){
-  const giveUp = setTimeout(()=>{ if(cloud.state==='loading'){ cloud.state='error'; cloud.err='Couldn’t load Google sign-in. Check your internet connection, then reload the page.'; render(); } }, 15000);
-  try{
-    const base = `https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/`;
-    await Promise.all(['app','auth','firestore'].map(n=>loadScript(base+`firebase-${n}-compat.js`)));   // downloaded side by side, run in order
-    firebase.initializeApp(FIREBASE_CONFIG);
-    cloud.auth = firebase.auth(); cloud.db = firebase.firestore();
-    try{ await cloud.db.enablePersistence({synchronizeTabs:true}); }catch(e){}   // keeps working offline
-    cloud.auth.getRedirectResult().catch(e=>{ cloud.err = authMessage(e); render(); });
-    cloud.auth.onAuthStateChanged(onGoogleUser);
-  }catch(e){ clearTimeout(giveUp); cloud.state='error'; cloud.err='Couldn’t load Google sign-in. Check your internet connection, then reload the page.'; render(); }
-}
-function writeCache(){
-  const uid = cloud.user && cloud.user.uid, u = uid && store.users[uid];
-  if(!u) return;
-  const {id, ...profile} = u;
-  localStore.cloudCache = {uid, email:cloud.user.email||'', profile, lib: store.libs[uid] || {artists:{}, albums:{}}};
-  try{ localStorage.setItem(KEY, JSON.stringify(localStore)); }catch(e){}
-}
-function clearCache(){ delete localStore.cloudCache; try{ localStorage.setItem(KEY, JSON.stringify(localStore)); }catch(e){} }
-function onGoogleUser(u){
-  cloud.subs.forEach(f=>f()); cloud.subs = [];
-  const same = !!(u && cloud.cachedUid === u.uid);       // already showing this account from the saved copy
-  cloud.cachedUid = null;
-  cloud.user = u; cloud.libLoaded = false; cloud.sent = {p:'',l:''};
-  if(!same){ store.users = {}; store.libs = {}; me = null; lib = null; cloud.profile = undefined; cloud.dirty = false; }
-  if(!u){ clearCache(); cloud.state = 'signedout'; cloud.profile = undefined; render(); return; }
-  cloud.state = 'in'; cloud.err = ''; if(!same) render();
-  const uid = u.uid, users = cloud.db.collection('users').doc(uid), libs = cloud.db.collection('libraries').doc(uid);
-  const onErr = e => { cloud.err = 'Couldn’t reach your saved library. It will sync when you’re back online.'; render(); };
-  cloud.subs.push(users.onSnapshot(snap=>{
-    if(snap.metadata.hasPendingWrites) return;
-    const d = snap.exists ? snap.data() : null;
-    cloud.profile = d; cloud.sent.p = d ? JSON.stringify(d) : '';
-    if(d) store.users[uid] = {...d, id:uid}; else delete store.users[uid];
-    if(d && !me){ let s=null; try{ s=sessionStorage.getItem('ll-user'); }catch(e){} if(s===uid) signIn(uid); }   // already unlocked in this tab
-    if(!d && me===uid){ me=null; lib=null; }
-    writeCache(); render();
-  }, onErr));
-  cloud.subs.push(libs.onSnapshot(snap=>{
-    if(snap.metadata.hasPendingWrites) return;
-    const d = snap.exists ? snap.data() : {artists:{}, albums:{}};
-    const lj = JSON.stringify({artists:d.artists||{}, albums:d.albums||{}});
-    if(lj === cloud.sent.l && cloud.libLoaded) return;          // our own write coming back
-    cloud.sent.l = lj;
-    const local = store.libs[uid];
-    if(!cloud.libLoaded && cloud.dirty && local){
-      // things added before the connection was ready: keep them and save them
-      store.libs[uid] = {artists:{...(d.artists||{}), ...(local.artists||{})}, albums:{...(d.albums||{}), ...(local.albums||{})}};
-      cloud.libLoaded = true; cloud.dirty = false; save();
-    } else {
-      cloud.libLoaded = true;
-      store.libs[uid] = {artists:d.artists||{}, albums:d.albums||{}};
-    }
-    writeCache();
-    if(me===uid){ lib = store.libs[uid]; render(); }
-  }, onErr));
-}
-async function cloudSave(){
-  if(!CLOUD || !cloud.db || !cloud.user || !me) return;
-  const uid = cloud.user.uid, u = store.users[uid], l = store.libs[uid];
-  try{
-    if(u){
-      const prof = {name:u.name, salt:u.salt, pinHash:u.pinHash, skin:u.skin||'synth', createdAt:u.createdAt||Date.now()};
-      const pj = JSON.stringify(prof);
-      if(pj !== cloud.sent.p){ cloud.sent.p = pj; await cloud.db.collection('users').doc(uid).set(prof); }
-    }
-    if(l && cloud.libLoaded){      // never overwrite the saved library before it has been read
-      const lib2 = {artists:l.artists||{}, albums:l.albums||{}}, lj = JSON.stringify(lib2);
-      if(lj !== cloud.sent.l){ cloud.sent.l = lj; await cloud.db.collection('libraries').doc(uid).set(lib2); }
-    }
-  }catch(e){ cloud.sent = {p:'',l:''}; flash('Couldn’t save to your Google account just now. Your changes are kept and will be saved on the next change.'); }
-}
-function authMessage(e){
-  const c = e && e.code || '';
-  if(c==='auth/unauthorized-domain') return 'This website isn’t on your Firebase project’s list of allowed domains yet. Add it under Authentication → Settings → Authorized domains.';
-  if(c==='auth/network-request-failed') return 'No internet connection. Connect and try again.';
-  if(c==='auth/popup-closed-by-user' || c==='auth/cancelled-popup-request') return '';
-  return 'Google sign-in didn’t finish. Try again.';
-}
-async function googleSignIn(){
-  cloud.err = ''; render();
-  const provider = new firebase.auth.GoogleAuthProvider();
-  provider.setCustomParameters({prompt:'select_account'});
-  try{ await cloud.auth.signInWithPopup(provider); }
-  catch(e){
-    if(['auth/popup-blocked','auth/operation-not-supported-in-this-environment'].includes(e.code)){
-      try{ await cloud.auth.signInWithRedirect(provider); return; }catch(e2){ e = e2; }
-    }
-    cloud.err = authMessage(e); render();
-  }
-}
-async function googleSignOut(){
-  if(!cloud.auth){ flash('Still connecting to Google. Try again in a moment.'); return; }
-  try{ sessionStorage.removeItem('ll-user'); }catch(e){}
-  ui.auth = {mode:'login', pin:'', err:''}; location.hash='';
-  await cloud.auth.signOut();
-}
+function save(){ try{ localStorage.setItem(KEY, JSON.stringify(store)); }catch(e){ flash('Couldn’t save in this browser. Check that site storage is allowed.'); } }
 
 /* ---------- themes ---------- */
 const SKINS = [
@@ -587,10 +451,9 @@ function viewAlbum(id){
 }
 
 function footer(){
-  return `<footer><span>${CLOUD && cloud.user ? 'Saved to your Google account, '+esc(cloud.user.email||'')+'.' : 'Profiles are saved in this browser only.'}</span>
+  return `<footer><span>Profiles are saved in this browser only.</span>
     <button type="button" class="ghost" id="export">Back up library</button>
     <button type="button" class="ghost" id="import">Restore from backup</button>
-    ${CLOUD && cloud.user ? '<button type="button" class="ghost" id="g-out">Sign out of Google</button>' : ''}
     <button type="button" class="ghost" id="del-me">Delete my profile</button>
     <span>Music data from Apple Music.</span></footer>`;
 }
@@ -602,7 +465,7 @@ function topbar(){
     <div class="who"><span class="avatar" style="background:${avatarColor(u.name)}" aria-hidden="true">${esc(initials(u.name))}</span>
       <span class="name">${esc(u.name)}</span>
       ${installBtn()}<button type="button" class="ghost" id="toggle-themes" aria-expanded="${ui.showThemes}">Theme</button>
-      <button type="button" class="ghost" id="logout">${CLOUD ? 'Lock' : 'Log out'}</button></div></div>
+      <button type="button" class="ghost" id="logout">Log out</button></div></div>
     ${ui.showThemes ? themePanel() : ''}`;
 }
 function themePanel(){
@@ -615,34 +478,8 @@ function themePanel(){
 }
 
 /* ---------- sign-in screens ---------- */
-const deckHTML = () => `<div class="deck" id="deck" aria-hidden="true"><div class="plinth"></div><div class="platter"></div>
-      <div class="vinyl" id="vinyl" style="transform:rotate(${spin.angle}deg)"><div class="label"><b>SIDE A</b><i></i></div></div>
-      <div class="sheen"></div><div class="pivot"></div><div class="arm" id="arm"><span class="head"></span></div></div>`;
-const gLogo = '<svg viewBox="0 0 48 48" width="20" height="20" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.6 5.4 2.7 13.3l7.9 6.1C12.5 13.6 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.4c-.5 2.9-2.2 5.3-4.6 6.9l7.4 5.7c4.3-4 6.9-9.9 6.9-17.1z"/><path fill="#FBBC05" d="M10.6 28.6c-.5-1.4-.8-3-.8-4.6s.3-3.2.8-4.6l-7.9-6.1C1 16.6 0 20.2 0 24s1 7.4 2.7 10.7l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.4-5.7c-2.1 1.4-4.8 2.3-8.5 2.3-6.2 0-11.5-4.1-13.4-9.8l-7.9 6.1C6.6 42.6 14.6 48 24 48z"/></svg>';
-function whoLine(){
-  if(!CLOUD || !cloud.user) return '';
-  return `<p class="hint">Signed in as ${esc(cloud.user.email||cloud.user.displayName||'your Google account')} · <button type="button" class="link" id="g-out">Not you? Sign out</button></p>`;
-}
-function viewCloudGate(){
-  if(cloud.state==='loading' || (cloud.state==='in' && cloud.profile===undefined)) return `
-  <div class="auth tt">${deckHTML()}
-    <div class="side"><div class="head"><span class="eyebrow">Listening Log</span><h1>Warming up</h1><p class="sub">Getting your records ready…</p></div>
-    ${cloud.err?`<p class="err" role="alert">${esc(cloud.err)}</p>`:''}</div></div>`;
-  if(cloud.state==='error' || cloud.state==='signedout') return `
-  <div class="auth tt">${deckHTML()}
-    <div class="side">
-      <div class="head"><span class="eyebrow">Welcome</span><h1>Your records, everywhere</h1>
-        <p class="sub">Sign in with Google once on this device. After that, your PIN opens the app, and your library follows you to every phone and laptop.</p></div>
-      <p class="err" role="alert">${esc(cloud.err)}</p>
-      ${cloud.state==='signedout'?`<button type="button" class="gbtn" id="g-in">${gLogo}<span>Continue with Google</span></button>`:''}
-      ${installBtn()}
-    </div></div>`;
-  return null;
-}
 function viewAuth(){
-  if(CLOUD){ const g = viewCloudGate(); if(g) return g; }
   const a = ui.auth, hasUsers = Object.keys(store.users).length>0;
-  if(CLOUD && (a.mode==='create' || !hasUsers)) return viewCloudCreate();
   if(a.mode==='create' || !hasUsers) return `
   <div class="auth">
     <div class="head"><span class="eyebrow">New profile</span><h1>${hasUsers?'Create your profile':'Welcome! Create the first profile'}</h1></div>
@@ -671,38 +508,9 @@ function viewAuth(){
       <button type="button" data-digit="0">0</button>
       <button type="button" class="back" id="pin-back" aria-label="Delete last digit">⌫</button>
     </div>
-    ${CLOUD ? '<button type="button" class="link" id="forgot">Forgot your PIN?</button>'+whoLine()
-            : '<button type="button" class="link" id="to-create">New here? Create a profile</button>'}
+    <button type="button" class="link" id="to-create">New here? Create a profile</button>
     ${installBtn()}
     </div>
-  </div>`;
-}
-function viewCloudCreate(){
-  const a = ui.auth, reset = !!cloud.profile;
-  const locals = Object.values(localStore.users||{});
-  const name = a.name || (cloud.profile && cloud.profile.name) || (cloud.user && cloud.user.displayName) || '';
-  return `
-  <div class="auth">
-    <div class="head"><span class="eyebrow">${reset?'New PIN':'Almost done'}</span><h1>${reset?'Choose a new PIN':'Set up your profile'}</h1>
-      <p class="sub">${reset?'Your library stays as it is.':'Your PIN unlocks the app each time you open it.'}</p></div>
-    <form class="form" id="f-create" autocomplete="off">
-      <label>Your name<input id="c-name" required maxlength="40" value="${esc(name)}"></label>
-      <label>Choose a 4-digit PIN<input id="c-pin" class="pinbox" type="password" inputmode="numeric" pattern="\\d{4}" maxlength="4" required></label>
-      <label>Type the PIN again<input id="c-pin2" class="pinbox" type="password" inputmode="numeric" pattern="\\d{4}" maxlength="4" required></label>
-      <p class="err" role="alert">${esc(a.err)}</p>
-      <button type="submit">${reset?'Save new PIN':'Create profile'}</button>
-    </form>
-    ${!reset && locals.length ? `
-    <form class="form panel" id="f-bring" autocomplete="off">
-      <h2>Already have a profile on this device?</h2>
-      <p class="hint">Bring its name, PIN, theme and library into your Google account.</p>
-      <label>Profile<select id="b-who">${locals.map(u=>`<option value="${esc(u.id)}">${esc(u.name)}</option>`).join('')}</select></label>
-      <label>That profile’s PIN<input id="b-pin" class="pinbox" type="password" inputmode="numeric" pattern="\\d{4}" maxlength="4" required></label>
-      <p class="err" role="alert">${esc(a.bringErr||'')}</p>
-      <button type="submit">Bring it over</button>
-    </form>` : ''}
-    ${reset ? '<button type="button" class="link" id="to-login">Back to PIN</button>' : ''}
-    ${whoLine()}
   </div>`;
 }
 const dotsHTML = () => [0,1,2,3].map(i=>`<span class="${i<ui.auth.pin.length?'on':''}"></span>`).join('');
@@ -836,9 +644,6 @@ app.addEventListener('click', async e=>{
   const r = route();
   if(b.id==='install' && installPrompt){ const p = installPrompt; installPrompt = null; p.prompt(); try{ await p.userChoice; }catch(err){} render(); return; }
   if(b.id==='install-ios'){ ui.notice = 'To install on iPhone or iPad: tap the Share button in Safari, then “Add to Home Screen”.'; if(!me){ ui.auth.err = ui.notice; } render(); return; }
-  if(b.id==='g-in'){ googleSignIn(); return; }
-  if(b.id==='g-out'){ googleSignOut(); return; }
-  if(b.id==='forgot'){ ui.auth = {mode:'create', pin:'', err:''}; render(); return; }
   if(b.dataset.digit){ pushDigit(b.dataset.digit); return; }
   if(b.id==='pin-back'){ if(ui.checking) return; ui.auth.pin = ui.auth.pin.slice(0,-1); updateLogin(); return; }
   if(b.id==='to-create'){ ui.auth = {mode:'create', pin:'', err:''}; render(); return; }
@@ -850,12 +655,6 @@ app.addEventListener('click', async e=>{
     if(!b.classList.contains('armed')){
       b.classList.add('armed','danger'); b.textContent='Tap again to delete your profile and library';
       setTimeout(()=>{ if(b.isConnected){ b.classList.remove('armed','danger'); b.textContent='Delete my profile'; } }, 5000); return;
-    }
-    if(CLOUD && cloud.user){
-      const uid = cloud.user.uid;
-      try{ await cloud.db.collection('libraries').doc(uid).delete(); await cloud.db.collection('users').doc(uid).delete(); }
-      catch(err){ flash('Couldn’t delete your profile right now. Check your connection and try again.'); return; }
-      clearCache(); await googleSignOut(); return;
     }
     delete store.users[me]; delete store.libs[me]; save(); signOut(); return;
   }
@@ -905,19 +704,6 @@ document.getElementById('import-file').addEventListener('change', async e=>{
 });
 
 app.addEventListener('submit', async e=>{
-  if(e.target.id==='f-bring'){
-    e.preventDefault();
-    const lu = (localStore.users||{})[document.getElementById('b-who').value];
-    const pin = document.getElementById('b-pin').value;
-    if(!lu || await hashPin(pin, lu.salt) !== lu.pinHash){ ui.auth = {...ui.auth, bringErr:'That PIN doesn’t match this profile.'}; render(); return; }
-    const uid = cloud.user.uid, old = (localStore.libs||{})[lu.id] || {};
-    store.users[uid] = {id:uid, name:lu.name, salt:lu.salt, pinHash:lu.pinHash, skin:lu.skin||'synth', createdAt:lu.createdAt||Date.now()};
-    const cur = store.libs[uid] || {artists:{}, albums:{}};
-    store.libs[uid] = {artists:{...cur.artists, ...(old.artists||{})}, albums:{...cur.albums, ...(old.albums||{})}};
-    cloud.profile = store.users[uid];
-    ui.auth = {mode:'login', pin:'', err:''};
-    signIn(uid); location.hash=''; flash(`Brought over ${lu.name}’s library.`); return;
-  }
   if(e.target.id!=='f-create') return;
   e.preventDefault();
   const name = document.getElementById('c-name').value.trim();
@@ -926,11 +712,9 @@ app.addEventListener('submit', async e=>{
   if(!name) return fail('Enter your name.');
   if(!/^\d{4}$/.test(p1)) return fail('The PIN must be exactly 4 digits.');
   if(p1!==p2) return fail('The two PINs don’t match. Type them again.');
-  if(!CLOUD && await findByPin(p1)) return fail('Choose a different PIN.');
-  const id = CLOUD ? cloud.user.uid : newId(), salt = Math.random().toString(36).slice(2) + Date.now().toString(36);
-  const prev = store.users[id] || {};
-  store.users[id] = {id, name, salt, pinHash: await hashPin(p1, salt), skin: prev.skin || 'synth', createdAt: prev.createdAt || Date.now()};
-  if(CLOUD){ cloud.profile = store.users[id]; store.libs[id] = store.libs[id] || {artists:{}, albums:{}}; ui.auth = {mode:'login', pin:'', err:''}; signIn(id); location.hash=''; render(); return; }
+  if(await findByPin(p1)) return fail('Choose a different PIN.');
+  const id = newId(), salt = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  store.users[id] = {id, name, salt, pinHash: await hashPin(p1, salt), skin: 'synth', createdAt: Date.now()};
   // The first profile inherits a library saved by the earlier, single-user version.
   if(!store.migrated){
     try{ const old = JSON.parse(localStorage.getItem(OLD_KEY)||'null'); if(old && (Object.keys(old.artists||{}).length)) store.libs[id] = {artists:old.artists||{}, albums:old.albums||{}}; }catch(err){}
@@ -946,18 +730,7 @@ document.addEventListener('keydown', e=>{
   else if(e.key==='Backspace' && !ui.checking){ ui.auth.pin = ui.auth.pin.slice(0,-1); updateLogin(); }
 });
 
-if(CLOUD){
-  me = null;
-  const c = localStore.cloudCache;          // open straight to the PIN screen using the copy saved on this device
-  if(c && c.uid && c.profile){
-    cloud.cachedUid = c.uid; cloud.user = {uid:c.uid, email:c.email}; cloud.state = 'in'; cloud.profile = c.profile;
-    store.users[c.uid] = {...c.profile, id:c.uid}; store.libs[c.uid] = c.lib || {artists:{}, albums:{}};
-    let s = null; try{ s = sessionStorage.getItem('ll-user'); }catch(e){}
-    if(s === c.uid) signIn(c.uid);
-  }
-  initCloud();
-}
-else if(me && store.users[me]) signIn(me); else me = null;
+if(me && store.users[me]) signIn(me); else me = null;
 applySkin();
 render();
 })();
