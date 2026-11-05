@@ -204,7 +204,7 @@ const ui = {
   auth:{mode:'login', pin:'', err:''}, fails:0, lockUntil:0
 };
 
-/* ---------- music data: Deezer first, Apple Music (iTunes) as a backup ---------- */
+/* ---------- music data: Apple Music (iTunes) catalogue ---------- */
 // Both are loaded with JSONP (a <script> tag), so no API key or server is needed.
 let cbN = 0;
 function jsonp(url, params){
@@ -225,7 +225,7 @@ const dz = (path, params={}) => jsonp('https://api.deezer.com'+path, {...params,
 const it = (path, params={}) => jsonp('https://itunes.apple.com'+path, params);
 const isApple = id => String(id).startsWith('it');
 const art = (u,n) => u ? u.replace(/\/\d+x\d+bb\./, `/${n}x${n}bb.`) : '';
-let source = 'deezer';           // becomes 'apple' if Deezer can't be reached from this device
+let source = 'apple';            // Apple Music catalogue for everyone; Deezer code stays only for albums saved by older versions
 function appleAlbum(c){
   let title = c.collectionName || '', type = 'album';
   if(/ - Single$/.test(title)){ type='single'; title=title.replace(/ - Single$/,''); }
@@ -410,7 +410,7 @@ function footer(){
     <button type="button" class="ghost" id="export">Back up library</button>
     <button type="button" class="ghost" id="import">Restore from backup</button>
     <button type="button" class="ghost" id="del-me">Delete my profile</button>
-    <span>Music data from <a href="https://www.deezer.com" target="_blank" rel="noopener">Deezer</a> or Apple Music.</span></footer>`;
+    <span>Music data from Apple Music.</span></footer>`;
 }
 
 function topbar(){
