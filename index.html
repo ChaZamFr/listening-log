@@ -14,7 +14,6 @@
 <meta name="apple-mobile-web-app-title" content="Listening Log">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://itunes.apple.com">
-<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
 <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Bungee&family=Space+Mono:wght@400;700&family=IBM+Plex+Sans:wght@400;500;600&family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700&display=swap">
 <style>
@@ -225,20 +224,64 @@ const FIREBASE_CONFIG = {
   messagingSenderId: "18036390176",
   appId: "1:18036390176:web:9769268847a559ba92ff45"
 };
-const FIREBASE_VERSION = '10.12.2';
-const net = { ready:null, db:null, unsub:null, timer:0, sent:'' };
-function loadScript(src){
-  return new Promise((ok,fail)=>{ const t=document.createElement('script'); t.src=src; t.async=false; t.onload=ok; t.onerror=()=>fail({type:'error'}); document.head.appendChild(t); });
+// Talks to the Firestore database with plain web requests (its REST API), so no extra code has to load
+// and it works on networks that block Firebase's live connection.
+const API = `https://firestore.googleapis.com/v1/projects/${FIREBASE_CONFIG.projectId}/databases/(default)/documents`;
+const net = { db:null, unsub:null, timer:0, sent:'' };
+function enc(v){
+  if(v === null || v === undefined) return {nullValue:null};
+  if(typeof v === 'boolean') return {booleanValue:v};
+  if(typeof v === 'number') return Number.isInteger(v) ? {integerValue:String(v)} : {doubleValue:v};
+  if(typeof v === 'string') return {stringValue:v};
+  if(Array.isArray(v)) return {arrayValue: v.length ? {values:v.map(enc)} : {}};
+  const fields = {}; for(const k of Object.keys(v)) fields[k] = enc(v[k]);
+  return {mapValue:{fields}};
 }
-function connect(){
-  if(!net.ready){
-    const base = `https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/`;
-    net.ready = Promise.all(['app','firestore'].map(n=>loadScript(base+`firebase-${n}-compat.js`)))
-      .then(()=>{ if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG); net.db = firebase.firestore(); return net.db; })
-      .catch(e=>{ net.ready = null; throw e; });
-  }
-  return net.ready;
+function dec(v){
+  if('nullValue' in v) return null;
+  if('booleanValue' in v) return v.booleanValue;
+  if('integerValue' in v) return Number(v.integerValue);
+  if('doubleValue' in v) return v.doubleValue;
+  if('stringValue' in v) return v.stringValue;
+  if('timestampValue' in v) return v.timestampValue;
+  if('arrayValue' in v) return (v.arrayValue.values||[]).map(dec);
+  if('mapValue' in v){ const o = {}, f = v.mapValue.fields||{}; for(const k of Object.keys(f)) o[k] = dec(f[k]); return o; }
+  return null;
 }
+async function rest(method, path, body){
+  let res;
+  try{
+    res = await fetch(`${API}/${path}?key=${encodeURIComponent(FIREBASE_CONFIG.apiKey)}`,
+      {method, headers: body ? {'Content-Type':'application/json'} : undefined, body: body ? JSON.stringify(body) : undefined, cache:'no-store'});
+  }catch(e){ throw {code:'unavailable', message:String(e && e.message || e)}; }
+  if(res.ok) return method === 'DELETE' ? null : res.json();
+  const j = await res.json().catch(()=>({})), err = j.error || {}, m = err.message || res.statusText;
+  if(res.status === 404 && !/database.*does not exist/i.test(m)) return null;      // the document just isn't there
+  const map = {PERMISSION_DENIED:'permission-denied', NOT_FOUND:'not-found', FAILED_PRECONDITION:'failed-precondition', INVALID_ARGUMENT:'invalid-argument', UNAUTHENTICATED:'unauthenticated'};
+  throw {code: map[err.status] || (err.status ? err.status.toLowerCase() : 'http-'+res.status), message:m};
+}
+const snapOf = j => ({exists: !!j, data: () => j ? dec({mapValue:{fields:j.fields||{}}}) : undefined, metadata:{hasPendingWrites:false}});
+function docRef(path){
+  return {
+    get: async () => snapOf(await rest('GET', path)),
+    set: async data => { await rest('PATCH', path, {fields: enc(data).mapValue.fields}); },
+    delete: async () => { await rest('DELETE', path); },
+    onSnapshot(cb){                 // checks for changes from other devices every few seconds
+      let stop = false, last = null;
+      const tick = async () => {
+        if(stop) return;
+        if(document.visibilityState !== 'hidden'){
+          try{ const j = await rest('GET', path), sig = j ? j.updateTime : 'none'; if(sig !== last){ last = sig; cb(snapOf(j)); } }catch(e){}
+        }
+        if(!stop) setTimeout(tick, 4000);
+      };
+      tick();
+      return () => { stop = true; };
+    }
+  };
+}
+const restDb = { collection: c => ({ doc: id => docRef(c + '/' + id) }) };
+function connect(){ net.db = restDb; return Promise.resolve(restDb); }
 const normName = n => String(n).trim().replace(/\s+/g,' ').toLowerCase();
 async function sha(text){
   const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
@@ -251,11 +294,10 @@ const OFFLINE = 'You need an internet connection for this. Connect and try again
 function netError(e){
   const code = (e && e.code) || '', msg = String((e && e.message) || '');
   if(!navigator.onLine) return OFFLINE;
-  if(e && e.type === 'error' && !code) return 'The database code couldn’t load from gstatic.com. An ad blocker, privacy extension or school/office network may be blocking it. Allow this site or try another network.';
   if(code === 'permission-denied') return 'The database refused this. In Firebase, open Firestore Database → Rules, paste in the rules from firestore.rules and click Publish. (permission-denied)';
   if(code === 'not-found' || /does not exist|NOT_FOUND/i.test(msg)) return 'The online database hasn’t been created yet. In Firebase, open Firestore Database and click Create database. (not-found)';
   if(code === 'failed-precondition') return 'The online database isn’t ready yet. In Firebase, check that Firestore Database is created. (failed-precondition)';
-  if(code === 'unavailable' || /offline/i.test(msg)) return 'Couldn’t reach the online database. If your internet works, a firewall or blocker may be stopping firestore.googleapis.com. (unavailable)';
+  if(code === 'unavailable') return 'Couldn’t reach firestore.googleapis.com. An ad blocker, privacy extension or school/office network may be blocking it. Allow this site or try another network. (unavailable)';
   if(code === 'invalid-argument' || code === 'unauthenticated') return 'Firebase rejected the project settings. Check the Firebase config in index.html. (' + code + ')';
   return 'Something went wrong talking to the online database' + (code ? ' (' + code + ')' : '') + (msg ? ': ' + msg.slice(0,140) : '.');
 }
