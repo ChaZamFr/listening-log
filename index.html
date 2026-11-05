@@ -13,6 +13,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Listening Log">
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
+<link rel="preconnect" href="https://itunes.apple.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Bungee&family=Space+Mono:wght@400;700&family=IBM+Plex+Sans:wght@400;500;600&family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700&display=swap">
 <style>
 /* Layout: one column; search on top, then a crate of photos/covers that open into detail pages */
@@ -229,6 +232,8 @@ function save(){
   if(CLOUD){
     localStore.lastSkin = store.lastSkin;
     try{ localStorage.setItem(KEY, JSON.stringify(localStore)); }catch(e){}
+    if(!cloud.libLoaded) cloud.dirty = true;
+    writeCache();
     clearTimeout(cloud.timer); cloud.timer = setTimeout(cloudSave, 500);
     return;
   }
@@ -237,15 +242,13 @@ function save(){
 
 /* ---------- cloud sync ---------- */
 function loadScript(src){
-  return new Promise((ok,fail)=>{ const t=document.createElement('script'); t.src=src; t.onload=ok; t.onerror=fail; document.head.appendChild(t); });
+  return new Promise((ok,fail)=>{ const t=document.createElement('script'); t.src=src; t.async=false; t.onload=ok; t.onerror=fail; document.head.appendChild(t); });
 }
 async function initCloud(){
   const giveUp = setTimeout(()=>{ if(cloud.state==='loading'){ cloud.state='error'; cloud.err='Couldn’t load Google sign-in. Check your internet connection, then reload the page.'; render(); } }, 15000);
   try{
     const base = `https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/`;
-    await loadScript(base+'firebase-app-compat.js');
-    await loadScript(base+'firebase-auth-compat.js');
-    await loadScript(base+'firebase-firestore-compat.js');
+    await Promise.all(['app','auth','firestore'].map(n=>loadScript(base+`firebase-${n}-compat.js`)));   // downloaded side by side, run in order
     firebase.initializeApp(FIREBASE_CONFIG);
     cloud.auth = firebase.auth(); cloud.db = firebase.firestore();
     try{ await cloud.db.enablePersistence({synchronizeTabs:true}); }catch(e){}   // keeps working offline
@@ -253,11 +256,22 @@ async function initCloud(){
     cloud.auth.onAuthStateChanged(onGoogleUser);
   }catch(e){ clearTimeout(giveUp); cloud.state='error'; cloud.err='Couldn’t load Google sign-in. Check your internet connection, then reload the page.'; render(); }
 }
+function writeCache(){
+  const uid = cloud.user && cloud.user.uid, u = uid && store.users[uid];
+  if(!u) return;
+  const {id, ...profile} = u;
+  localStore.cloudCache = {uid, email:cloud.user.email||'', profile, lib: store.libs[uid] || {artists:{}, albums:{}}};
+  try{ localStorage.setItem(KEY, JSON.stringify(localStore)); }catch(e){}
+}
+function clearCache(){ delete localStore.cloudCache; try{ localStorage.setItem(KEY, JSON.stringify(localStore)); }catch(e){} }
 function onGoogleUser(u){
   cloud.subs.forEach(f=>f()); cloud.subs = [];
-  cloud.user = u; cloud.libLoaded = false; cloud.sent = {p:'',l:''}; store.users = {}; store.libs = {}; me = null; lib = null;
-  if(!u){ cloud.state = 'signedout'; cloud.profile = undefined; render(); return; }
-  cloud.state = 'in'; cloud.profile = undefined; cloud.err = ''; render();
+  const same = !!(u && cloud.cachedUid === u.uid);       // already showing this account from the saved copy
+  cloud.cachedUid = null;
+  cloud.user = u; cloud.libLoaded = false; cloud.sent = {p:'',l:''};
+  if(!same){ store.users = {}; store.libs = {}; me = null; lib = null; cloud.profile = undefined; cloud.dirty = false; }
+  if(!u){ clearCache(); cloud.state = 'signedout'; cloud.profile = undefined; render(); return; }
+  cloud.state = 'in'; cloud.err = ''; if(!same) render();
   const uid = u.uid, users = cloud.db.collection('users').doc(uid), libs = cloud.db.collection('libraries').doc(uid);
   const onErr = e => { cloud.err = 'Couldn’t reach your saved library. It will sync when you’re back online.'; render(); };
   cloud.subs.push(users.onSnapshot(snap=>{
@@ -267,20 +281,29 @@ function onGoogleUser(u){
     if(d) store.users[uid] = {...d, id:uid}; else delete store.users[uid];
     if(d && !me){ let s=null; try{ s=sessionStorage.getItem('ll-user'); }catch(e){} if(s===uid) signIn(uid); }   // already unlocked in this tab
     if(!d && me===uid){ me=null; lib=null; }
-    render();
+    writeCache(); render();
   }, onErr));
   cloud.subs.push(libs.onSnapshot(snap=>{
     if(snap.metadata.hasPendingWrites) return;
     const d = snap.exists ? snap.data() : {artists:{}, albums:{}};
     const lj = JSON.stringify({artists:d.artists||{}, albums:d.albums||{}});
     if(lj === cloud.sent.l && cloud.libLoaded) return;          // our own write coming back
-    cloud.sent.l = lj; cloud.libLoaded = true;
-    store.libs[uid] = {artists:d.artists||{}, albums:d.albums||{}};
+    cloud.sent.l = lj;
+    const local = store.libs[uid];
+    if(!cloud.libLoaded && cloud.dirty && local){
+      // things added before the connection was ready: keep them and save them
+      store.libs[uid] = {artists:{...(d.artists||{}), ...(local.artists||{})}, albums:{...(d.albums||{}), ...(local.albums||{})}};
+      cloud.libLoaded = true; cloud.dirty = false; save();
+    } else {
+      cloud.libLoaded = true;
+      store.libs[uid] = {artists:d.artists||{}, albums:d.albums||{}};
+    }
+    writeCache();
     if(me===uid){ lib = store.libs[uid]; render(); }
   }, onErr));
 }
 async function cloudSave(){
-  if(!CLOUD || !cloud.user || !me) return;
+  if(!CLOUD || !cloud.db || !cloud.user || !me) return;
   const uid = cloud.user.uid, u = store.users[uid], l = store.libs[uid];
   try{
     if(u){
@@ -314,6 +337,7 @@ async function googleSignIn(){
   }
 }
 async function googleSignOut(){
+  if(!cloud.auth){ flash('Still connecting to Google. Try again in a moment.'); return; }
   try{ sessionStorage.removeItem('ll-user'); }catch(e){}
   ui.auth = {mode:'login', pin:'', err:''}; location.hash='';
   await cloud.auth.signOut();
@@ -394,8 +418,11 @@ async function searchArtists(q){
     catch(e){ source = 'apple'; }
   }
   const d = await it('/search', {term:q, entity:'musicArtist', limit:12});
-  const list = (d.results||[]).map(a=>({id:'it'+a.artistId, name:a.artistName, genre:a.primaryGenreName, link:a.artistLinkUrl}));
-  if(list.length){   // Apple has no artist photos here, so use each artist's latest album cover
+  return (d.results||[]).map(a=>({id:'it'+a.artistId, name:a.artistName, genre:a.primaryGenreName, link:a.artistLinkUrl}));
+}
+async function artistPictures(list){   // Apple has no artist photos, so use each artist's latest album cover
+  list = list.filter(a=>isApple(a.id) && !a.picture_medium);
+  if(list.length){
     try{
       const r = await it('/lookup', {id:list.map(a=>a.id.slice(2)).join(','), entity:'album', limit:1, sort:'recent'});
       for(const x of r.results||[]){
@@ -767,6 +794,7 @@ function runSearch(){
       const list = await searchArtists(q);
       if(seq!==searchSeq) return;
       ui.results = list; ui.err='';
+      artistPictures(list).then(()=>{ if(seq===searchSeq) part('results', resultsHTML()); });
     }catch(e){ if(seq!==searchSeq) return; ui.err='Couldn’t reach the music catalogue. Check your internet, or try turning off an ad blocker for this site.'; }
     ui.searching = false; part('results', resultsHTML());
   }, 300);
@@ -827,7 +855,7 @@ app.addEventListener('click', async e=>{
       const uid = cloud.user.uid;
       try{ await cloud.db.collection('libraries').doc(uid).delete(); await cloud.db.collection('users').doc(uid).delete(); }
       catch(err){ flash('Couldn’t delete your profile right now. Check your connection and try again.'); return; }
-      await googleSignOut(); return;
+      clearCache(); await googleSignOut(); return;
     }
     delete store.users[me]; delete store.libs[me]; save(); signOut(); return;
   }
@@ -918,7 +946,17 @@ document.addEventListener('keydown', e=>{
   else if(e.key==='Backspace' && !ui.checking){ ui.auth.pin = ui.auth.pin.slice(0,-1); updateLogin(); }
 });
 
-if(CLOUD){ me = null; initCloud(); }
+if(CLOUD){
+  me = null;
+  const c = localStore.cloudCache;          // open straight to the PIN screen using the copy saved on this device
+  if(c && c.uid && c.profile){
+    cloud.cachedUid = c.uid; cloud.user = {uid:c.uid, email:c.email}; cloud.state = 'in'; cloud.profile = c.profile;
+    store.users[c.uid] = {...c.profile, id:c.uid}; store.libs[c.uid] = c.lib || {artists:{}, albums:{}};
+    let s = null; try{ s = sessionStorage.getItem('ll-user'); }catch(e){}
+    if(s === c.uid) signIn(c.uid);
+  }
+  initCloud();
+}
 else if(me && store.users[me]) signIn(me); else me = null;
 applySkin();
 render();
