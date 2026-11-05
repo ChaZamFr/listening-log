@@ -1,6 +1,6 @@
 // Listening Log service worker: keeps the app opening when you're offline.
 // Bump VERSION whenever you upload a new index.html so phones pick it up quickly.
-const VERSION = 'v4';
+const VERSION = 'v5';
 const SHELL = `ll-shell-${VERSION}`;
 const FONTS = 'll-fonts';
 const SHELL_FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
@@ -28,14 +28,6 @@ self.addEventListener('fetch', event => {
       fetch(req)
         .then(res => { const copy = res.clone(); caches.open(SHELL).then(c => c.put('./index.html', copy)); return res; })
         .catch(() => caches.match('./index.html'))
-    );
-    return;
-  }
-
-  // Google sign-in library (the version number is in the address, so a saved copy never goes stale).
-  if (url.hostname === 'www.gstatic.com' && url.pathname.startsWith('/firebasejs/')) {
-    event.respondWith(
-      caches.open(FONTS).then(c => c.match(req).then(hit => hit || fetch(req).then(res => { if (res.ok) c.put(req, res.clone()); return res; })))
     );
     return;
   }
