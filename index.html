@@ -93,6 +93,15 @@ button.added{background:transparent;color:var(--ok);border:1px solid currentColo
 .search{display:flex;flex-direction:column;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-panel);padding:14px}
 .search input{background:var(--bg)}
 .results{display:flex;flex-direction:column;max-height:420px;overflow-y:auto}
+[hidden]{display:none!important}
+.aq-row{display:flex;gap:8px;align-items:center}
+.aq-row input{flex:1;min-width:0}
+.collapse{flex:none;width:42px;height:42px;padding:0;display:grid;place-items:center;background:transparent;color:var(--muted);border:1px solid var(--line)}
+.collapse:hover{color:var(--ink);border-color:var(--accent)}
+.collapse svg{width:18px;height:18px}
+.disco-panel{display:flex;flex-direction:column;gap:12px}
+@media (prefers-reduced-motion:no-preference){.disco-panel:not([hidden]){animation:drop .18s ease-out}}
+@keyframes drop{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
 .result{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:12px;align-items:center;padding:8px 4px;border-top:1px solid var(--line)}
 .result:first-child{border-top:0}
 .result .thumb{width:52px;height:52px;border-radius:var(--r-pic);object-fit:cover;background:var(--line)}
@@ -250,7 +259,7 @@ const initials = s => String(s).trim().split(/\s+/).slice(0,2).map(w=>w[0]||'').
 const ui = {
   q:'', results:[], searching:false, err:'',
   disco:{}, discoErr:{}, albumQ:'', type:'album',
-  tracks:{}, notice:'', showThemes:false,
+  tracks:{}, notice:'', showThemes:false, discoOpen:false,
   auth:{mode:'login', pin:'', err:''}, fails:0, lockUntil:0
 };
 
@@ -356,7 +365,7 @@ function route(){
   if(h.startsWith('artist-')) return {view:'artist', id:h.slice(7)};
   return {view:'home'};
 }
-window.addEventListener('hashchange', ()=>{ if(!me) return; ui.notice=''; ui.albumQ=''; ui.q=''; ui.results=[]; render(); window.scrollTo(0,0); });
+window.addEventListener('hashchange', ()=>{ if(!me) return; ui.notice=''; ui.albumQ=''; ui.discoOpen=false; ui.q=''; ui.results=[]; render(); window.scrollTo(0,0); });
 
 /* ---------- views ---------- */
 const notice = () => ui.notice ? `<div class="notice" role="status">${esc(ui.notice)}</div>` : '';
@@ -403,24 +412,51 @@ function viewArtist(id){
   <div class="hero artist">${img(a.pictureXL||a.picture,a.name)}
     <div class="head"><span class="eyebrow">Artist${a.addedAt?' · added '+new Date(a.addedAt).toLocaleDateString(undefined,{month:'short',year:'numeric'}):''}</span>
       <h1>${esc(a.name)}</h1>
-      <div class="stats"><span><b>${mine.length}</b> albums heard</span><span><b>${songs}</b> songs</span></div>
+      <div class="stats" id="artist-stats">${artistStats(id)}</div>
     </div>
   </div>
   ${notice()}
   <div class="search">
-    <input id="aq" type="search" placeholder="Search ${esc(a.name)}’s albums" autocomplete="off" value="${esc(ui.albumQ)}" aria-label="Search this artist’s albums">
-    <div class="chips" role="group" aria-label="Release type">
-      ${['album','ep','single','compile','all'].map(t=>`<button type="button" class="chip" data-type="${t}" aria-pressed="${ui.type===t}">${t==='all'?'All':typeLabel(t)+'s'}</button>`).join('')}
+    <div class="aq-row">
+      <input id="aq" type="search" placeholder="Search ${esc(a.name)}’s albums" autocomplete="off" value="${esc(ui.albumQ)}" aria-label="Search this artist’s albums" aria-controls="disco-panel" aria-expanded="${ui.discoOpen}">
+      <button type="button" class="collapse" id="disco-close" aria-label="Hide album list" ${ui.discoOpen?'':'hidden'}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     </div>
-    <div id="disco">${discoHTML(id)}</div>
+    <div class="disco-panel" id="disco-panel" ${ui.discoOpen?'':'hidden'}>
+      <div class="chips" id="type-chips" role="group" aria-label="Release type">${chipsHTML()}</div>
+      <div id="disco">${discoHTML(id)}</div>
+    </div>
   </div>
   <h2>Albums I’ve heard</h2>
-  ${mine.length ? `<div class="grid">${mine.map(x=>`
+  <div id="mine">${mineHTML(id)}</div>
+  <div class="row"><button class="danger" id="del-artist" type="button">Remove artist</button><span class="hint">Also removes their albums from your library.</span></div>`;
+}
+function artistStats(id){
+  const mine = myAlbums(id), songs = mine.reduce((n,x)=>n+(x.nbTracks||0),0);
+  return `<span><b>${mine.length}</b> albums heard</span><span><b>${songs}</b> songs</span>`;
+}
+function mineHTML(id){
+  const mine = myAlbums(id);
+  return mine.length ? `<div class="grid">${mine.map(x=>`
     <a class="card" href="#album-${x.id}">${img(x.cover,x.title)}
       <span class="t">${esc(x.title)}</span>
       <span class="s">${year(x.date)}${x.nbTracks?' · '+plural(x.nbTracks,'song'):''}</span></a>`).join('')}</div>`
-  : `<div class="empty">Search above and tap Add on the albums you’ve heard.</div>`}
-  <div class="row"><button class="danger" id="del-artist" type="button">Remove artist</button><span class="hint">Also removes their albums from your library.</span></div>`;
+  : `<div class="empty">Tap the search bar above to see their albums, then tap Add on the ones you’ve heard.</div>`;
+}
+const chipsHTML = () => ['album','ep','single','compile','all'].map(t=>`<button type="button" class="chip" data-type="${t}" aria-pressed="${ui.type===t}">${t==='all'?'All':typeLabel(t)+'s'}</button>`).join('');
+// update the artist page in place, so the album list keeps its scroll position
+function refreshArtist(id){
+  if(route().id!==id) return;
+  part('artist-stats', artistStats(id));
+  part('mine', mineHTML(id));
+}
+function setDisco(open){
+  if(ui.discoOpen===open) return;
+  ui.discoOpen = open;
+  const p = document.getElementById('disco-panel'), c = document.getElementById('disco-close'), q = document.getElementById('aq');
+  if(p) p.hidden = !open;
+  if(c) c.hidden = !open;
+  if(q) q.setAttribute('aria-expanded', String(open));
 }
 function discoHTML(id){
   if(ui.discoErr[id]) return `<p class="hint">${esc(ui.discoErr[id])} <button type="button" class="ghost" id="retry-disco">Try again</button></p>`;
@@ -590,7 +626,10 @@ function render(){
   const act = document.activeElement && document.activeElement.id;
   const pos = act && document.activeElement.selectionStart;
   if(!me){ app.innerHTML = brand() + viewAuth(); if(act){ const el=document.getElementById(act); if(el) el.focus(); } spin.target = SPEEDS[ui.auth.pin.length]||SPEEDS[0]; startSpin(); return; }
+  const lists = [...document.querySelectorAll('.results')].map(el=>el.scrollTop), y = window.scrollY;
   app.innerHTML = topbar() + (r.view==='artist' ? viewArtist(r.id) : r.view==='album' ? viewAlbum(r.id) : viewHome());
+  document.querySelectorAll('.results').forEach((el,i)=>{ if(lists[i]) el.scrollTop = lists[i]; });
+  if(Math.abs(window.scrollY - y) > 1) window.scrollTo(0, y);
   if(act){ const el=document.getElementById(act); if(el){ el.focus(); try{ if(pos!=null) el.setSelectionRange(pos,pos); }catch(e){} } }
   if(r.view==='artist' && lib.artists[r.id] && !ui.disco[r.id] && !ui.discoErr[r.id] && !loadingDisco[r.id]) loadDisco(r.id);
   if(r.view==='album' && lib.albums[r.id] && !ui.tracks[r.id] && !loadingTracks[r.id] && !ui.tracksErr) loadTracks(r.id);
@@ -645,8 +684,10 @@ async function loadTracks(id){
 /* ---------- events (delegated) ---------- */
 app.addEventListener('input', e=>{
   if(e.target.id==='q'){ ui.q = e.target.value; runSearch(); }
-  if(e.target.id==='aq'){ ui.albumQ = e.target.value; part('disco', discoHTML(route().id)); }
+  if(e.target.id==='aq'){ ui.albumQ = e.target.value; setDisco(true); part('disco', discoHTML(route().id)); }
 });
+app.addEventListener('focusin', e=>{ if(e.target.id==='aq') setDisco(true); });
+app.addEventListener('keydown', e=>{ if(e.target.id==='aq' && e.key==='Escape'){ setDisco(false); e.target.blur(); } });
 app.addEventListener('click', async e=>{
   const b = e.target.closest('button'); if(!b) return;
   const r = route();
@@ -675,12 +716,15 @@ app.addEventListener('click', async e=>{
     const list = ui.disco[r.id]||[]; const x = list.find(y=>String(y.id)===b.dataset.addAlbum); if(!x) return;
     lib.albums[x.id] = {id:String(x.id), artistId:r.id, artistName:(lib.artists[r.id]||{}).name, title:x.title, cover:x.cover_medium, coverXL:x.cover_xl,
       date:x.release_date, type:x.record_type, link:x.link, addedAt:Date.now()};
-    save(); render();
+    save();
+    b.outerHTML = '<button type="button" class="added" disabled>Added</button>';   // change just this button; the list stays where it is
+    refreshArtist(r.id);
     // fetch the track count in the background so the counts are right
-    try{ const d = await albumInfo(x.id); const al=lib.albums[x.id]; if(al){ al.nbTracks=d.nb; al.duration=d.duration; al.label=d.label; save(); if(route().id===r.id) render(); } }catch(err){}
+    try{ const d = await albumInfo(x.id); const al=lib.albums[x.id]; if(al){ al.nbTracks=d.nb; al.duration=d.duration; al.label=d.label; save(); refreshArtist(r.id); } }catch(err){}
     return;
   }
-  if(b.dataset.type){ ui.type = b.dataset.type; render(); return; }
+  if(b.id==='disco-close'){ setDisco(false); const q=document.getElementById('aq'); if(q) q.blur(); return; }
+  if(b.dataset.type){ ui.type = b.dataset.type; part('type-chips', chipsHTML()); part('disco', discoHTML(r.id)); return; }
   if(b.id==='retry-disco'){ delete ui.discoErr[r.id]; part('disco', discoHTML(r.id)); loadDisco(r.id); return; }
   if(b.id==='retry-tracks'){ ui.tracksErr=''; render(); return; }
   if(b.id==='del-artist' || b.id==='del-album'){
